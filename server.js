@@ -43,32 +43,43 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
 
 /* =========================
-   Routes
+   Health Route
 ========================= */
 
 app.get("/", (req, res) => {
   res.send("AI Stylist Backend Running 🚀");
 });
 
+/* =========================
+   Upload + AI Vision
+========================= */
+
 app.post("/upload", upload.single("image"), async (req, res) => {
+  console.log("=== UPLOAD ROUTE HIT ===");
+
   try {
     if (!req.file) {
+      console.log("No file received");
       return res.status(400).json({ error: "No image uploaded" });
     }
 
+    if (!process.env.OPENAI_API_KEY) {
+      console.log("OPENAI_API_KEY MISSING");
+      return res.status(500).json({ error: "API key not configured" });
+    }
+
+    console.log("File received:", req.file.filename);
+
     const imagePath = req.file.path;
 
-    // Convert image to base64
     const imageBase64 = fs.readFileSync(imagePath, {
       encoding: "base64",
     });
 
-    /* =========================
-       Call AI API
-    ========================= */
+    console.log("Calling OpenAI Vision...");
 
     const aiResponse = await axios.post(
       "https://api.openai.com/v1/responses",
@@ -80,8 +91,19 @@ app.post("/upload", upload.single("image"), async (req, res) => {
             content: [
               {
                 type: "input_text",
-                text:
-                  "You are a professional fashion stylist. Analyze the clothing in this image and give: 1) Style description 2) Color suggestions 3) Outfit improvements 4) Occasion suitability",
+                text: `
+You are a professional fashion stylist.
+
+Analyze this person's outfit carefully and provide:
+
+1. Detailed style description
+2. Color analysis
+3. Specific improvement suggestions
+4. Suitable occasions
+5. Overall fashion rating (out of 10)
+
+Be specific to this exact image.
+                `,
               },
               {
                 type: "input_image",
@@ -99,9 +121,28 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       }
     );
 
-    const suggestions =
-      aiResponse.data.output[0].content[0].text ||
-      "No suggestions returned.";
+    console.log("OpenAI response received");
+
+    /* =========================
+       Extract Text Safely
+    ========================= */
+
+    let suggestions = "No suggestions returned.";
+
+    if (
+      aiResponse.data &&
+      aiResponse.data.output &&
+      aiResponse.data.output.length > 0
+    ) {
+      const contentArray = aiResponse.data.output[0].content;
+
+      for (let item of contentArray) {
+        if (item.type === "output_text") {
+          suggestions = item.text;
+          break;
+        }
+      }
+    }
 
     res.json({
       success: true,
@@ -109,10 +150,11 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error.response?.data || error.message);
+    console.error("AI ERROR:", error.response?.data || error.message);
 
     res.status(500).json({
       error: "AI processing failed",
+      details: error.response?.data || error.message,
     });
   }
 });
